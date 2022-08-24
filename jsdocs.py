@@ -891,7 +891,7 @@ class JsdocsSmola(JsdocsParser):
             'varIdentifier': r'(?P<type>[a-zA-Z_][a-zA-Z0-9_\(\), ]+) [&]*(?P<name>' + identifier + ')',
             'fnOpener': r'Method\s+',
             'bool': 'Boolean',
-            'function': 'function'
+            'function': 'Method'
         }
 
     def parseFunction(self, line):
@@ -899,7 +899,7 @@ class JsdocsSmola(JsdocsParser):
         if not res:
             return None
 
-        return (res.group('name'), res.group('args'), None, ['static'])
+        return (res.group('name'), res.group('args'), None)
 
     def getArgType(self, arg):
         return re.search(self.settings['varIdentifier'] + r"(?:\s*=.*)?$", arg).group('type').replace(" ", "")
@@ -951,6 +951,22 @@ class JsdocsSmola(JsdocsParser):
                 if openBrackets == 0:
                     break
         return definition
+
+    def getFunctionReturnType(self, name, retval):
+        """ returns None for no return type. False meaning unknown, or a string """
+
+        if re.match("[A-Z]", name):
+            # no return, but should add a class
+            return None
+
+        if re.match('[$_]?(?:set|add)($|[A-Z_])', name):
+            # setter/mutator, no return
+            return None
+
+        if re.match('[$_]?(?:is|has)($|[A-Z_])', name):  # functions starting with 'is' or 'has'
+            return self.settings['bool']
+
+        return self.guessTypeFromName(name) or None
 
 
 class JsdocsCPP(JsdocsParser):
