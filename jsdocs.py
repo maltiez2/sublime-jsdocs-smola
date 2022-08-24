@@ -71,6 +71,8 @@ def getParser(view):
         return JsdocsRust(viewSettings)
     elif sourceLang == 'ts':
         return JsdocsTypescript(viewSettings)
+    elif sourceLang == 'smola' or sourceLang == 'Smola' or sourceLang == 'smola3':
+        return JsdocsSmola(viewSettings)
     return JsdocsJavascript(viewSettings)
 
 
@@ -379,7 +381,7 @@ class JsdocsParser(object):
             else:
                 valType = self.guessTypeFromValue(val) or self.guessTypeFromName(name) or "[type]"
         if self.inline:
-            out.append("@%s %s${1:%s}%s ${1:[description]}" % (
+            out.append("@%s %s${1:%s}%s ${1:description}" % (
                 self.settings['typeTag'],
                 "{" if self.settings['curlyTypes'] else "",
                 valType,
@@ -415,7 +417,7 @@ class JsdocsParser(object):
 
         extraTagAfter = self.viewSettings.get("jsdocs_extra_tags_go_after") or False
 
-        description = self.getNameOverride() or ('[%s%sdescription]' % (escape(name), ' ' if name else ''))
+        description = self.getNameOverride() or ('%s%sdescription' % (escape(name), '_' if name else ''))
         if self.viewSettings.get('jsdocs_function_description'):
             out.append("${1:%s}" % description)
 
@@ -437,7 +439,7 @@ class JsdocsParser(object):
 
                 format_str = "@param %s%s"
                 if (self.viewSettings.get('jsdocs_param_description')):
-                    format_str += " ${1:[description]}"
+                    format_str += " ${1:description}"
 
                 out.append(format_str % (
                     typeInfo,
@@ -452,7 +454,7 @@ class JsdocsParser(object):
             if self.settings['typeInfo']:
                 typeInfo = ' %s${1:%s}%s' % (
                     "{" if self.settings['curlyTypes'] else "",
-                    retType or "[type]",
+                    retType or "type",
                     "}" if self.settings['curlyTypes'] else ""
                 )
             format_args = [
@@ -461,7 +463,7 @@ class JsdocsParser(object):
             ]
 
             if (self.viewSettings.get('jsdocs_return_description')):
-                format_str = "%s%s %s${1:[description]}"
+                format_str = "%s%s %s${1:description}"
                 third_arg = ""
 
                 # the extra space here is so that the description will align with the param description
@@ -876,6 +878,81 @@ class JsdocsPHP(JsdocsParser):
         return JsdocsParser.getFunctionReturnType(self, name, retval)
 
 
+class JsdocsSmola(JsdocsParser):
+    def setupSettings(self):
+        nameToken = '[a-zA-Z_][a-zA-Z0-9_]*'
+        identifier = '(%s)(::%s)?' % (nameToken, nameToken)
+        self.settings = {
+            'typeInfo': True,
+            'curlyTypes': False,
+            'typeTag': 'param',
+            'commentCloser': ' */',
+            'fnIdentifier': identifier,
+            'varIdentifier': r'(?P<type>[a-zA-Z_][a-zA-Z0-9_\(\), ]+) [&]*(?P<name>' + identifier + ')',
+            'fnOpener': r'Method\s+',
+            'bool': 'Boolean',
+            'function': 'function'
+        }
+
+    def parseFunction(self, line):
+        res = re.search(r'Method\s+' + r'(?P<name>' + self.settings['fnIdentifier'] + r')\s*' + r'\((?P<args>.*)\)\s*', line)
+        if not res:
+            return None
+
+        return (res.group('name'), res.group('args'), None, ['static'])
+
+    def getArgType(self, arg):
+        return re.search(self.settings['varIdentifier'] + r"(?:\s*=.*)?$", arg).group('type').replace(" ", "")
+
+    def getArgName(self, arg):
+        return re.search(self.settings['varIdentifier'] + r"(?:\s*=.*)?$", arg).group('name')
+
+    def getDefinition(self, view, pos):
+        """
+        get a relevant definition starting at the given point
+        returns string
+        """
+        maxLines = 25  # don't go further than this
+        openBrackets = 0
+
+        definition = ''
+
+        # count the number of open parentheses
+        def countBrackets(total, bracket):
+            return total + (1 if bracket == '(' else -1)
+
+        for i in range(0, maxLines):
+            line = read_line(view, pos)
+            if line is None:
+                break
+
+            pos += len(line) + 1
+            # strip comments
+            line = re.sub(r"//.*",     "", line)
+            line = re.sub(r"/\*.*\*/", "", line)
+
+            searchForBrackets = line
+
+            # on the first line, only start looking from *after* the actual function starts. This is
+            # needed for cases like this:
+            # (function (foo, bar) { ... })
+            if definition == '':
+                opener = re.search(self.settings['fnOpener'], line) if self.settings['fnOpener'] else False
+                if opener:
+                    # ignore everything before the function opener
+                    searchForBrackets = line[opener.start():]
+
+            openBrackets = reduce(countBrackets, re.findall('[()]', searchForBrackets), openBrackets)
+
+            definition += line
+            if openBrackets == 0:
+                searchForBrackets = read_line(view, pos)
+                openBrackets = reduce(countBrackets, re.findall('[()]', searchForBrackets), openBrackets)
+                if openBrackets == 0:
+                    break
+        return definition
+
+
 class JsdocsCPP(JsdocsParser):
     def setupSettings(self):
         nameToken = '[a-zA-Z_][a-zA-Z0-9_]*'
@@ -1258,6 +1335,7 @@ class JsdocsJava(JsdocsParser):
                 definition = re.sub(r'\s*[;{]\s*$', '', definition)
                 break
         return definition
+
 
 class JsdocsRust(JsdocsParser):
     def setupSettings(self):
